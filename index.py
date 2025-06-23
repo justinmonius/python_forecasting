@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 from io import BytesIO
 import base64
+import warnings
+warnings.filterwarnings("ignore")
 
 # Z-scores and colors for confidence intervals
 z_scores = {
@@ -66,37 +68,47 @@ if uploaded_file:
             st.warning(f"⚠️ Skipped part '{part_name}' due to missing values.")
             continue
 
-        total_len = len(values) + 11
-        X = np.arange(total_len).reshape(-1, 1)
-        X_train = np.arange(len(values)).reshape(-1, 1)
+        series = pd.Series(values, index=dates)
 
-        model = LinearRegression()
-        model.fit(X_train, values)
-        y_pred = model.predict(X)
-
-        residuals = values - model.predict(X_train)
-        mse = np.mean(residuals**2)
-        se = np.sqrt(mse)
+        try:
+            model = SARIMAX(series, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
+            result = model.fit(disp=False)
+            forecast = result.get_forecast(steps=11)
+            y_pred = np.concatenate([series.values, forecast.predicted_mean.values])
+            se = forecast.se_mean.values
+        except:
+            st.warning(f"⚠️ Could not fit SARIMA model for part '{part_name}'.")
+            continue
 
         row_data = [part_name]
         for i, dt in enumerate(all_dates):
             row_data.append(round(y_pred[i], 1))
             for level, z in z_scores.items():
-                lower = round(y_pred[i] - z * se, 1)
-                upper = round(y_pred[i] + z * se, 1)
+                if i < len(series):
+                    std_dev = np.std(series.values)
+                    lower = round(y_pred[i] - z * std_dev, 1)
+                    upper = round(y_pred[i] + z * std_dev, 1)
+                else:
+                    idx = i - len(series)
+                    lower = round(y_pred[i] - z * se[idx], 1)
+                    upper = round(y_pred[i] + z * se[idx], 1)
                 row_data.append(f"{lower} - {upper}")
 
         forecast_data.append(row_data)
         part_names.append(part_name)
 
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(dates, values, label="Actual", marker='o')
-        ax.plot(all_dates, y_pred, label="Forecast Line", linestyle='dotted')
+        ax.plot(dates, series, label="Actual", marker='o')
+        ax.plot(all_dates, y_pred, label="Forecast Line", linestyle='dotted', linewidth=2)
 
         for level, z in z_scores.items():
-            lower = y_pred - z * se
-            upper = y_pred + z * se
-            ax.fill_between(all_dates, lower, upper, alpha=0.3, color=ci_colors[level], label=f"{level} CI")
+            upper_ci = y_pred.copy()
+            lower_ci = y_pred.copy()
+            for i in range(len(series), len(y_pred)):
+                idx = i - len(series)
+                lower_ci[i] = y_pred[i] - z * se[idx]
+                upper_ci[i] = y_pred[i] + z * se[idx]
+            ax.fill_between(all_dates, lower_ci, upper_ci, alpha=0.3, color=ci_colors[level], label=f"{level} CI")
 
         ax.set_title(f"Forecast for {part_name}")
         ax.set_xlabel("Date")
