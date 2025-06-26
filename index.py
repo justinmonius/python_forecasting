@@ -125,8 +125,7 @@ def process_forecast(uploaded_file):
             if series.isnull().any():
                 raise ValueError("Input y contains NaN.")
 
-            if (series != 0).sum() < 5:
-                st.warning(f"Part '{selected_part}' skipped: Not at least 5 data points. Cannot forecast")
+            if (series != 0).sum() < 4:
                 continue
 
             forecast_horizon = 18
@@ -206,7 +205,7 @@ if uploaded_file:
         if selected_part in graph_images:
             st.image(graph_images[selected_part])
         else:
-            st.info("Not enough data to forecast")
+            st.info("Not enough data to forecast this part")
 
         results_df = pd.DataFrame(forecast_rows)
         results_df = results_df[["Part"] + sorted(c for c in results_df.columns if c != "Part")]
