@@ -51,7 +51,7 @@ def should_use_arima(series):
     )
 
 st.title("Part Consumption Forecasting Tool")
-st.write("Upload an Excel file with part usage history across multiple years or sheets.")
+st.write("Upload an Excel file with part usage history across multiple years or sheets. There must be 3 columns titled Part, Date, and Quantity. These column headers must be in the very first row of your excel sheet")
 
 uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx"])
 
@@ -61,7 +61,6 @@ def process_forecast(uploaded_file):
     df = pd.concat(sheets.values(), ignore_index=True)
     df.columns = df.columns.str.strip()
 
-    # Strict column name mapping
     col_map = {}
     qty_col = part_col = date_col = None
 
@@ -117,7 +116,6 @@ def process_forecast(uploaded_file):
             part_df = part_series_dict[selected_part].copy()
             part_df.set_index("Date of Initiation", inplace=True)
 
-            # Reindex to ensure all months up to today are present, filled with 0s
             today = pd.Timestamp.today().replace(day=1)
             full_index = pd.date_range(start=part_df.index.min(), end=today, freq="MS")
             part_df = part_df.reindex(full_index, fill_value=0)
@@ -127,8 +125,12 @@ def process_forecast(uploaded_file):
             if series.isnull().any():
                 raise ValueError("Input y contains NaN.")
 
+            if (series != 0).sum() < 5:
+                st.warning(f"Part '{selected_part}' skipped: Not at least 5 data points. Cannot forecast")
+                continue
+
             forecast_horizon = 18
-            forecast_dates = pd.date_range(start=today + pd.DateOffset(months=1), periods=forecast_horizon, freq="MS")
+            forecast_dates = pd.date_range(start=today, periods=forecast_horizon, freq="MS")
             all_dates = series.index.tolist() + forecast_dates.tolist()
 
             use_arima = should_use_arima(series)
@@ -151,20 +153,11 @@ def process_forecast(uploaded_file):
                 se = np.array([base_std * (1 + 0.05 * i) for i in range(1, forecast_horizon + 1)])
 
             row_data = {"Part": selected_part}
-
             for i, dt in enumerate(all_dates):
-                forecast_col = dt.strftime("%Y-%m") + " Forecast"
-                row_data[forecast_col] = round(y_pred[i], 1)
-                forecast_headers.add(forecast_col)
-
-                for level, z in z_scores.items():
-                    ci_col = dt.strftime("%Y-%m") + f" {level} CI Range"
-                    idx = max(i - len(series), 0)
-                    std = se[idx] if i >= len(series) else np.std(series.values)
-                    lower = round(y_pred[i] - z * std, 1)
-                    upper = round(y_pred[i] + z * std, 1)
-                    row_data[ci_col] = f"{lower} - {upper}"
-                    forecast_headers.add(ci_col)
+                if dt >= forecast_dates[0]:
+                    forecast_col = dt.strftime("%Y-%m") + " Forecast"
+                    row_data[forecast_col] = round(y_pred[i], 1)
+                    forecast_headers.add(forecast_col)
 
             forecast_rows.append(row_data)
 
@@ -215,8 +208,8 @@ if uploaded_file:
         else:
             st.info("Not enough data to forecast")
 
-        all_headers = ["Part"] + sorted(forecast_headers)
-        results_df = pd.DataFrame(forecast_rows).reindex(columns=all_headers)
+        results_df = pd.DataFrame(forecast_rows)
+        results_df = results_df[["Part"] + sorted(c for c in results_df.columns if c != "Part")]
 
         with BytesIO() as excel_buf:
             with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
