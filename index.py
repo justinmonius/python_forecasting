@@ -193,7 +193,7 @@ def process_forecast(uploaded_file):
             graph_images[selected_part] = buf
 
         except Exception as e:
-            st.warning(f"Part '{selected_part}' skipped due to error: {e}")
+            st.warning(f"Part '{ selected_part}' skipped due to error: {e}")
 
     return valid_parts, forecast_headers, forecast_rows, graph_images
 
