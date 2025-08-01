@@ -48,6 +48,7 @@ def should_use_arima(series):
         and (series != series.mean()).sum() > 5
         and series.diff().abs().mean() > 0.5
         and is_stationary(series)
+        and series.std() > 3  # new condition to ensure strong signal
     )
 
 st.title("Part Consumption Forecasting Tool")
@@ -128,18 +129,21 @@ def process_forecast(uploaded_file):
             if (series != 0).sum() < 4:
                 continue
 
-            forecast_horizon = 18
+            forecast_horizon = 30
             forecast_dates = pd.date_range(start=today, periods=forecast_horizon, freq="MS")
             all_dates = series.index.tolist() + forecast_dates.tolist()
 
             use_arima = should_use_arima(series)
 
             if use_arima:
-                model = ARIMA(series, order=(1, 1, 1))
+                model = ARIMA(series, order=(10, 1, 3))
                 result = model.fit()
                 forecast = result.get_forecast(steps=forecast_horizon)
                 y_pred = np.concatenate([series.values, forecast.predicted_mean.values])
                 se = forecast.se_mean.values
+                y_pred = np.clip(y_pred, 0, None)
+
+                
             else:
                 X_train = np.arange(len(series)).reshape(-1, 1)
                 X_forecast = np.arange(len(series) + forecast_horizon).reshape(-1, 1)
@@ -210,12 +214,20 @@ if uploaded_file:
         results_df = pd.DataFrame(forecast_rows)
         results_df = results_df[["Part"] + sorted(c for c in results_df.columns if c != "Part")]
 
+        # Reshape from wide to long format
+        long_df = results_df.melt(id_vars=["Part"], var_name="Date", value_name="Forecast")
+        long_df["Date"] = long_df["Date"].str.replace(" Forecast", "")  # Remove " Forecast" suffix
+        long_df["Date"] = pd.to_datetime(long_df["Date"], format="%Y-%m")  # Convert to datetime
+
+        long_df = long_df.sort_values(by=["Part", "Date"])
+
         with BytesIO() as excel_buf:
             with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
-                results_df.to_excel(writer, sheet_name="Forecast", index=False)
+                long_df.to_excel(writer, sheet_name="Forecast", index=False)
             excel_buf.seek(0)
             b64 = base64.b64encode(excel_buf.read()).decode()
             href = f'<a href="data:application/octet-stream;base64,{b64}" download="forecast_results.xlsx">Download Forecast Data (Excel)</a>'
             st.markdown(href, unsafe_allow_html=True)
+
 
         st.success("Forecasting complete. View the chart above and download the data below.")
